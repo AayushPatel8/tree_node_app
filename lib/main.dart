@@ -39,6 +39,7 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
   late TreeNode root;
   late TreeNode active;
   int nextId = 2;
+  bool isDarkMode = false; // Dark mode state
 
   // Panning/zooming controller + viewport tracking for "center on new node"
   final TransformationController _tc = TransformationController();
@@ -71,6 +72,13 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
     );
     
     _recomputeLayoutAndCanvas(); // initial layout
+    
+    // Center on root node after the first frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_viewportSize != Size.zero) {
+        _centerOnRootNode();
+      }
+    });
   }
 
   @override
@@ -79,6 +87,24 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
     _scaleAnimationController.dispose();
     super.dispose();
   }
+
+  void _toggleDarkMode() {
+    setState(() {
+      isDarkMode = !isDarkMode;
+    });
+  }
+
+  // ---------- Theme colors ----------
+  Color get _primaryColor => isDarkMode ? Colors.deepPurple.shade400 : Colors.indigo.shade600;
+  Color get _primaryLightColor => isDarkMode ? Colors.deepPurple.shade200 : Colors.indigo.shade400;
+  Color get _backgroundStartColor => isDarkMode ? Colors.grey.shade900 : Colors.indigo.shade50;
+  Color get _backgroundEndColor => isDarkMode ? Colors.grey.shade800 : Colors.white;
+  Color get _surfaceColor => isDarkMode ? Colors.grey.shade800 : Colors.white;
+  Color get _onSurfaceColor => isDarkMode ? Colors.white : Colors.black;
+  Color get _cardColor => isDarkMode ? Colors.grey.shade700 : Colors.white;
+  Color get _activeNodeColor => isDarkMode ? Colors.deepPurple.shade500 : Colors.indigo.shade600;
+  Color get _inactiveNodeColor => isDarkMode ? Colors.grey.shade600 : Colors.blueGrey.shade500;
+  Color get _connectorColor => isDarkMode ? Colors.deepPurple.shade300 : Colors.indigo.shade300;
 
   // ---------- Tree helpers ----------
   int _depth(TreeNode n) {
@@ -149,6 +175,11 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
     });
     _nodeAnimationController.reset();
     _scaleAnimationController.reset();
+    
+    // Center on root node after reset
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _centerOnRootNode();
+    });
   }
 
   // ---------- Layout (tidy vertical tree) ----------
@@ -221,7 +252,27 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
     // Matrix4: scale stored at [0], [5]
     final m = _tc.value.storage;
     return m[0]; // assume uniform scale
-    }
+  }
+
+  void _centerOnRootNode() {
+    if (_viewportSize == Size.zero) return;
+
+    final s = _currentScale();
+    final nodeCenter = Offset(root.x + _offsetX + nodeDiameter / 2,
+                              root.y + _offsetY + nodeDiameter / 2);
+
+    // Position root node in the center horizontally and upper-center vertically
+    // Use 1/3 from top instead of exact center for better visual balance
+    final targetScreen = Offset(_viewportSize.width / 2, _viewportSize.height / 3);
+    final vx = targetScreen.dx - s * nodeCenter.dx;
+    final vy = targetScreen.dy - s * nodeCenter.dy;
+
+    final newMatrix = Matrix4.identity()
+      ..scale(s)
+      ..setTranslationRaw(vx, vy, 0);
+    _tc.value = newMatrix;
+  }
+
   void _centerOnNode(TreeNode node) {
     if (_viewportSize == Size.zero) return;
 
@@ -229,7 +280,7 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
     final nodeCenter = Offset(node.x + _offsetX + nodeDiameter / 2,
                               node.y + _offsetY + nodeDiameter / 2);
 
-    // We want: screen = s * world + v  =>  v = screenCenter - s*world
+    // For regular nodes, center them exactly in the middle of the screen
     final screenCenter = Offset(_viewportSize.width / 2, _viewportSize.height / 2);
     final vx = screenCenter.dx - s * nodeCenter.dx;
     final vy = screenCenter.dy - s * nodeCenter.dy;
@@ -259,17 +310,18 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
             scale: animationValue,
             child: Opacity(
               opacity: animationValue,
-              child: GestureDetector(
-                onTap: () {
-                  _scaleAnimationController.forward(from: 0).then((_) {
-                    _scaleAnimationController.reverse();
-                  });
-                  setState(() => active = node);
-                },
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    AnimatedBuilder(
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  // Main node circle
+                  GestureDetector(
+                    onTap: () {
+                      _scaleAnimationController.forward(from: 0).then((_) {
+                        _scaleAnimationController.reverse();
+                      });
+                      setState(() => active = node);
+                    },
+                    child: AnimatedBuilder(
                       animation: _scaleAnimationController,
                       builder: (context, child) {
                         final scaleValue = identical(node, active) 
@@ -283,21 +335,21 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: isActive ? Colors.indigo.shade600 : Colors.blueGrey.shade500,
+                              color: isActive ? _activeNodeColor : _inactiveNodeColor,
                               boxShadow: isActive
                                   ? [
                                       BoxShadow(
-                                        color: Colors.indigo.withOpacity(0.3),
+                                        color: _activeNodeColor.withOpacity(0.3),
                                         blurRadius: 12,
                                         spreadRadius: 2,
                                         offset: const Offset(0, 4),
                                       )
                                     ]
                                   : [
-                                      const BoxShadow(
-                                        color: Colors.black26,
+                                      BoxShadow(
+                                        color: isDarkMode ? Colors.black54 : Colors.black26,
                                         blurRadius: 4,
-                                        offset: Offset(0, 2),
+                                        offset: const Offset(0, 2),
                                       )
                                     ],
                               border: isActive 
@@ -316,43 +368,46 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
                         );
                       },
                     ),
-                    if (!identical(node, root))
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(12),
-                            onTap: () {
-                              setState(() {
-                                final p = node.parent!;
-                                p.children.remove(node);
-                                active = p;
-                                _recomputeLayoutAndCanvas();
-                              });
-                              WidgetsBinding.instance.addPostFrameCallback((_) => _centerOnNode(active));
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: Colors.red.shade50,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: Colors.red.shade200),
+                  ),
+                  // Delete (X) button - positioned on top-right of the node
+                  if (!identical(node, root))
+                    Positioned(
+                      top: -8,
+                      right: -8,
+                      child: GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            final p = node.parent!;
+                            p.children.remove(node);
+                            active = p;
+                            _recomputeLayoutAndCanvas();
+                          });
+                          WidgetsBinding.instance.addPostFrameCallback((_) => _centerOnNode(active));
+                        },
+                        child: Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.red.shade500,
+                            border: Border.all(color: Colors.white, width: 2),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.2),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
                               ),
-                              child: Text(
-                                'Delete',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.red.shade700,
-                                ),
-                              ),
-                            ),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.close,
+                            size: 14,
+                            color: Colors.white,
                           ),
                         ),
                       ),
-                  ],
-                ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -376,17 +431,38 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        final wasZeroSize = _viewportSize == Size.zero;
         _viewportSize = Size(constraints.maxWidth, constraints.maxHeight);
+        
+        // If this is the first time we know the viewport size, center on root
+        if (wasZeroSize && _viewportSize != Size.zero) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _centerOnRootNode();
+          });
+        }
+        
         return Scaffold(
           appBar: AppBar(
             elevation: 0,
-            backgroundColor: Colors.indigo.shade600,
+            backgroundColor: _primaryColor,
             foregroundColor: Colors.white,
             title: const Text(
               'Tree Graph Explorer',
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
             actions: [
+              // Dark mode toggle
+              IconButton(
+                tooltip: isDarkMode ? 'Switch to light mode' : 'Switch to dark mode',
+                onPressed: _toggleDarkMode,
+                icon: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 300),
+                  child: Icon(
+                    isDarkMode ? Icons.light_mode : Icons.dark_mode,
+                    key: ValueKey(isDarkMode),
+                  ),
+                ),
+              ),
               IconButton(
                 tooltip: 'Add child to active node',
                 onPressed: _addChildToActive,
@@ -404,14 +480,15 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
               ),
             ],
           ),
-          body: Container(
+          body: AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  Colors.indigo.shade50,
-                  Colors.white,
+                  _backgroundStartColor,
+                  _backgroundEndColor,
                 ],
               ),
             ),
@@ -430,13 +507,13 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
                     // Background pattern
                     Positioned.fill(
                       child: CustomPaint(
-                        painter: _BackgroundPainter(),
+                        painter: _BackgroundPainter(isDarkMode),
                       ),
                     ),
                     // Connectors
                     Positioned.fill(
                       child: CustomPaint(
-                        painter: _ConnectorPainter(root, _offsetX, _offsetY, nodeDiameter),
+                        painter: _ConnectorPainter(root, _offsetX, _offsetY, nodeDiameter, _connectorColor),
                       ),
                     ),
                     // Nodes
@@ -446,12 +523,13 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
               ),
             ),
           ),
-          bottomNavigationBar: Container(
+          bottomNavigationBar: AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: _cardColor,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
+                  color: isDarkMode ? Colors.black.withOpacity(0.3) : Colors.black.withOpacity(0.1),
                   blurRadius: 8,
                   offset: const Offset(0, -2),
                 ),
@@ -464,9 +542,9 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
-                      color: Colors.indigo.shade50,
+                      color: _primaryColor.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.indigo.shade200),
+                      border: Border.all(color: _primaryColor.withOpacity(0.3)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -474,19 +552,22 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
                         Icon(
                           Icons.radio_button_checked,
                           size: 16,
-                          color: Colors.indigo.shade600,
+                          color: _primaryColor,
                         ),
                         const SizedBox(width: 6),
-                        const Text(
+                        Text(
                           'Active:',
-                          style: TextStyle(fontWeight: FontWeight.w600),
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: _onSurfaceColor,
+                          ),
                         ),
                         const SizedBox(width: 4),
                         Text(
                           '${active.id}',
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
-                            color: Colors.indigo.shade700,
+                            color: _primaryColor,
                           ),
                         ),
                       ],
@@ -496,9 +577,11 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
-                      color: Colors.blueGrey.shade50,
+                      color: isDarkMode ? Colors.grey.shade600.withOpacity(0.3) : Colors.blueGrey.shade50,
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.blueGrey.shade200),
+                      border: Border.all(
+                        color: isDarkMode ? Colors.grey.shade500 : Colors.blueGrey.shade200,
+                      ),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -506,12 +589,15 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
                         Icon(
                           Icons.account_tree,
                           size: 16,
-                          color: Colors.blueGrey.shade600,
+                          color: isDarkMode ? Colors.grey.shade300 : Colors.blueGrey.shade600,
                         ),
                         const SizedBox(width: 6),
                         Text(
                           'Nodes: ${nextId - 1}',
-                          style: const TextStyle(fontWeight: FontWeight.w600),
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: _onSurfaceColor,
+                          ),
                         ),
                       ],
                     ),
@@ -522,7 +608,7 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
           ),
           floatingActionButton: FloatingActionButton(
             onPressed: _addChildToActive,
-            backgroundColor: Colors.indigo.shade600,
+            backgroundColor: _primaryColor,
             foregroundColor: Colors.white,
             tooltip: 'Add child to active node',
             child: const Icon(Icons.add),
@@ -534,10 +620,16 @@ class _TreePageState extends State<TreePage> with TickerProviderStateMixin {
 }
 
 class _BackgroundPainter extends CustomPainter {
+  final bool isDarkMode;
+  
+  _BackgroundPainter(this.isDarkMode);
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.indigo.withOpacity(0.03)
+      ..color = isDarkMode 
+          ? Colors.deepPurple.withOpacity(0.1) 
+          : Colors.indigo.withOpacity(0.03)
       ..strokeWidth = 1;
 
     const spacing = 50.0;
@@ -561,18 +653,21 @@ class _BackgroundPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _BackgroundPainter oldDelegate) => 
+      oldDelegate.isDarkMode != isDarkMode;
 }
 
 class _ConnectorPainter extends CustomPainter {
   final TreeNode root;
   final double ox, oy, d;
-  _ConnectorPainter(this.root, this.ox, this.oy, this.d);
+  final Color connectorColor;
+  
+  _ConnectorPainter(this.root, this.ox, this.oy, this.d, this.connectorColor);
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.indigo.shade300
+      ..color = connectorColor
       ..strokeWidth = 2.5
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
@@ -606,5 +701,5 @@ class _ConnectorPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ConnectorPainter old) =>
-      old.root != root || old.ox != ox || old.oy != oy || old.d != d;
+      old.root != root || old.ox != ox || old.oy != oy || old.d != d || old.connectorColor != connectorColor;
 }
